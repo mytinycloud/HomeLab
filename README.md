@@ -33,7 +33,7 @@ The core design philosophy is built on five key pillars:
 ### 2.0 Network diagram
 
 This document should be used in conjunction with the following visual diagrams:
-
+![Network diagram](/Network%20Diagram.svg)
 ---
 
 ### 3.0 Usability & Operational Requirements
