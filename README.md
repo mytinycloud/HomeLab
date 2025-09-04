@@ -16,7 +16,7 @@
 
 ### 1.0 Introduction & Design Philosophy
 
-This document outlines the final architecture of the homelab network following a significant upgrade to a high-availability, multi-gigabit infrastructure. This plan represents the design for the sixth major iteration (Mark VI) of the homelab and is intended to be the single source of truth for its physical, logical, and operational state.
+This document outlines the network architecture of the homelab network following a significant upgrade to a high-availability, multi-gigabit infrastructure. This plan represents the design for the sixth major iteration (Mark VI) of my homelab and is intended to be the single source of truth for its physical, logical, and operational state.
 
 The core design philosophy is built on five key pillars:
 
