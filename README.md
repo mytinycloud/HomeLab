@@ -16,7 +16,7 @@
 
 ### 1.0 Introduction & Design Philosophy
 
-This document outlines the network architecture of the homelab network following a significant upgrade to a high-availability, multi-gigabit infrastructure. This plan represents the design for the sixth major iteration (Mark VI) of my homelab and is intended to be the single source of truth for its physical, logical, and operational state.
+This document outlines the final architecture of the homelab network following a significant upgrade to a high-availability, multi-gigabit infrastructure. This plan represents the design for the sixth major iteration (Mark VI) of the homelab and is intended to be the single source of truth for its physical, logical, and operational state.
 
 The core design philosophy is built on five key pillars:
 
@@ -33,8 +33,6 @@ The core design philosophy is built on five key pillars:
 ### 2.0 Network diagram
 
 This document should be used in conjunction with the following visual diagrams:
-
-![Network Diagram](/Network%20Diagram.svg)
 
 ---
 
@@ -203,6 +201,7 @@ VLANs provide the primary layer of network separation.
 | **2** | **Storage** | `10.0.2.0/24` | **L3 Switch** | NFS/iSCSI traffic for `IX`. |
 | **3** | **Media** | `10.0.3.0/24` | **L3 Switch** | Media servers, game servers, containers. |
 | **4** | **VMs** | `10.0.4.0/24` | **L3 Switch** | General purpose lab VMs & databases. |
+| **5** | **Kubernetes** | `10.0.5.0/24` | **L3 Switch** | Dedicated network for Kubernetes cluster nodes and services. |
 | **20** | **Client** | `10.0.20.0/24` | **L3 Switch** | Trusted personal devices. |
 | **30** | **Monitoring** | `10.0.30.0/24` | **pfSense** | Prometheus, Grafana, and other monitoring tools. |
 | **100**| **Untrusted** | `10.0.100.0/24`| **pfSense** | IoT devices & all current wireless clients. |
@@ -221,6 +220,7 @@ To ensure consistency and predictability, IP addresses are allocated according t
 | **2 / Storage** | `10.0.2.0/24` | `.10-.49` | (None) | `.10`: IX |
 | **3 / Media** | `10.0.3.0/24` | `.10-.49` | `.100-.254` | `.10`: Docker Host, `.11`: Plex Server |
 | **4 / VMs** | `10.0.4.0/24` | `.10-.49` | `.100-.254` | `.10`: PostgreSQL-DB, `.20`: Authelia, `.30`: Ubuntu Lab |
+| **5 / Kubernetes**| `10.0.5.0/24` | `.10-.49` | (None) | `.10`: k8s-cp-01, `.11`: k8s-w-01, `.12`: k8s-w-02<br>*`.200-.220` reserved for MetalLB* |
 | **20 / Client** | `10.0.20.0/24` | `.50-.99` | `.100-.254` | (Static range reserved for devices like printers) |
 | **30 / Monitoring** | `10.0.30.0/24` | `.10-.49` | (None) | `.10`: Uptime Kuma, `.11`: Loki, `.12`: Prometheus, `.13`: Grafana |
 | **100 / Untrusted**| `10.0.100.0/24`| `.10-.49` | `.100-.254` | `.10`: Home Assistant |
@@ -256,21 +256,22 @@ The guiding principle is **"deny by default."** No traffic is permitted unless e
 
 #### 7.1 L3 Switch (Trusted Zone) Access Control
 
-The policy within the trusted zone (`VLANs 2, 3, 4, 20`) is **ALLOW ALL** to facilitate maximum performance. All non-local traffic is forwarded to pfSense for inspection.
+The policy within the trusted zone (`VLANs 2, 3, 4, 5, 20`) is **ALLOW ALL** to facilitate maximum performance. All non-local traffic is forwarded to pfSense for inspection.
 
 #### 7.2 pfSense Firewall (Security Zone) Access Control
 
 The pfSense cluster enforces security for all traffic crossing trust boundaries.
 
-| FROM &#9660; / TO &#9654; | Internet | Management (10) | Untrusted (100) | Monitoring (30) | Trusted Zone (2,3,4,20) |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Management (10)** | **ALLOW** | N/A | **ALLOW** | **ALLOW** | **ALLOW** |
-| **Untrusted (100)** | **ALLOW** | **DENY** | N/A | **DENY** | **DENY** |
-| **Monitoring (30)** | **ALLOW** | **DENY** | **ALLOW** `[1]` | N/A | **ALLOW** `[1]` |
-| **Trusted Zone (2,3,4,20)**| **ALLOW** | **ALLOW** `[2]` | **ALLOW** `[3]` | **ALLOW** `[4]` | (Handled by L3 Switch) |
-| **Internet** | N/A | **DENY** | **DENY** | **DENY** | **DENY** |
+| FROM &#9660; / TO &#9654; | Internet | Management (10) | Untrusted (100) | Monitoring (30) | Kubernetes (5) | Trusted Zone (2,3,4,20) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Management (10)** | **ALLOW** | N/A | **ALLOW** | **ALLOW** | **ALLOW** `[6]` | **ALLOW** |
+| **Untrusted (100)** | **ALLOW** | **DENY** | N/A | **DENY** | **DENY** | **DENY** |
+| **Monitoring (30)** | **ALLOW** | **DENY** | **ALLOW** `[1]`| N/A | **ALLOW** | **ALLOW** `[1]` |
+| **Kubernetes (5)** | **ALLOW** | **DENY** | **DENY** | **ALLOW** | N/A | **ALLOW** `[5]` |
+| **Trusted Zone (2,3,4,20)**| **ALLOW** | **ALLOW** `[2]` | **ALLOW** `[3]` | **ALLOW** `[4]` | **ALLOW** `[6]` | (Handled by L3 Switch) |
+| **Internet** | N/A | **DENY** | **DENY** | **DENY** | **DENY** | **DENY** |
 
-**Rule Exceptions:** `[1]` Monitoring probes. `[2]` Admin access. `[3]` IoT control. `[4]` Dashboard access.
+**Rule Exceptions:** `[1]` Monitoring probes. `[2]` Admin access. `[3]` IoT control. `[4]` Dashboard access. `[5]` K8s access to storage/DBs. `[6]` Admin access to K8s API (TCP/6443).
 
 ---
 
@@ -295,6 +296,7 @@ A **QoS** policy using **FQ_CODEL** will be implemented on the `pfSense` WAN int
 | **Network OS** | AlliedWare Plus | 5.5.x or later | Both switches must run identical firmware. |
 | **Firewall** | pfSense Plus | Latest Stable | Deployed as a VM cluster. |
 | **IDS/IPS** | Suricata | Latest Stable | Deployed as a pfSense package. |
+| **Container Orchestration** | K3s | Latest Stable | Lightweight Kubernetes distribution. |
 | **IaC Provisioning**| Terraform | Latest Stable | Used with the Proxmox provider. |
 | **IaC Configuration**| Ansible | Latest Stable | Manages VM/LXC configuration. |
 | **Monitoring** | Prometheus / Grafana| Latest Stable | Deployed as LXC containers. |
@@ -303,6 +305,8 @@ A **QoS** policy using **FQ_CODEL** will be implemented on the `pfSense` WAN int
 ---
 
 ### 11.0 Service Inventory & Application Stacks
+
+#### 11.1 Standalone Services
 <!-- ANSIBLE_MANAGED_BLOCK_START: service_inventory -->
 | Service Name | Host Node | VLAN | Purpose | Software & Versions |
 | :--- | :--- | :--- | :--- | :--- |
@@ -317,7 +321,17 @@ A **QoS** policy using **FQ_CODEL** will be implemented on the `pfSense` WAN int
 | **Grafana** | Caladan | Monitoring (30) | (LXC) Visualization dashboards for metrics and logs. | - Grafana: `10.4.2` |
 <!-- ANSIBLE_MANAGED_BLOCK_END: service_inventory -->
 
-#### 11.1 VM & Container Templates
+#### 11.2 Kubernetes Cluster
+
+The cluster will run K3s, a lightweight distribution. The nodes are provisioned as VMs across the Proxmox cluster.
+
+| Node Name | Role | Host Node | VLAN | IP Address | vCPU | RAM | Disk |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **k8s-cp-01** | Control Plane | Arrakis | Kubernetes (5) | `10.0.5.10` | 2 | 4 GB | 30 GB |
+| **k8s-w-01** | Worker | Arrakis | Kubernetes (5) | `10.0.5.11` | 4 | 8 GB | 50 GB |
+| **k8s-w-02** | Worker | Caladan | Kubernetes (5) | `10.0.5.12` | 2 | 3 GB | 50 GB |
+
+#### 11.3 VM & Container Templates
 <!-- ANSIBLE_MANAGED_BLOCK_START: template_inventory -->
 | Template Name | Type | Base OS | Key Features |
 | :--- | :--- | :--- | :--- |
@@ -352,6 +366,7 @@ A multi-layered 3-2-1 backup strategy is in place, utilizing Proxmox backups, An
 * **Dedicated ZFS Storage Server:** Build `CHOAM`, a dedicated TrueNAS server.
 * **Third Proxmox Node (`SALUSA SECUNDUS`):** Add a third node to enable Proxmox HA.
 * **VLAN-Aware Wi-Fi 7 AP:** Deploy a new AP to enable proper wireless segmentation.
+* **Migrate Services:** Systematically migrate containerized services from the standalone Docker host to the Kubernetes cluster.
 
 ---
 
@@ -363,6 +378,7 @@ A multi-layered 3-2-1 backup strategy is in place, utilizing Proxmox backups, An
 | **CARP** | Common Address Redundancy Protocol. Used by pfSense for firewall failover. |
 | **IaC** | Infrastructure as Code. Managing infrastructure through machine-readable definition files. |
 | **IDS/IPS**| Intrusion Detection/Prevention System. A security appliance that monitors for malicious activity. |
+| **K8s** | Kubernetes. An open-source container orchestration system for automating software deployment, scaling, and management. |
 | **LACP** | Link Aggregation Control Protocol. A protocol for bundling multiple network links into one logical link. |
 | **LXC** | Linux Containers. An operating-system-level virtualization method for running multiple isolated Linux systems. |
 | **SSO** | Single Sign-On. An authentication scheme that allows a user to log in with a single ID to any of several related software systems. |
